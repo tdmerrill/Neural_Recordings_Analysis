@@ -30,7 +30,7 @@ size during sorting to compensate.
 
 ### Analysis Tools
 If you'd like to use any additional analysis tools I've written to make plotting or further analysis easier,
-you can find the [Neural-Analysis-Tools repository on GitHub](https://github.com/tdmerrill/Neural-Recordings-Analysis)
+you can find the [Neural_Recordings_Analysis repository on GitHub](https://github.com/tdmerrill/Neural_Recordings_Analysis)
 
 These tools are not required, but if you want to use them you can clone the repo to access the code:
 ```bash
