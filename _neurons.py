@@ -84,7 +84,7 @@ class EvalQuality:
         return best_window_start
 
 class Response(EvalQuality):
-    def __init__(self, stim_lib_path, recordings_path, recording, db, ntrials=20):
+    def __init__(self, stim_lib_path, recordings_path, recording, db, ntrials=20, output=None):
         super().__init__(stim_lib_path, recordings_path, recording, db, ntrials=ntrials)
 
         self.db = db
@@ -94,6 +94,13 @@ class Response(EvalQuality):
         bird = recording.split(' ')[0]
         recording_path = os.path.join(recordings_path, bird, recording)
         self.rec = Recording(recording_path, samplerate=30000, db=db)
+
+        if output is None:
+            home_dir = os.path.expanduser('~')
+            self.output_path = os.path.join(home_dir, '.Neural_Recordings_Analysis', 'outputs')
+        else:
+            self.output_path = output
+        os.makedirs(self.output_path, exist_ok=True)
 
     # --- firing properies ---
     def evaluate_neurons(self):
@@ -464,7 +471,7 @@ class Response(EvalQuality):
 
         for unit, recording, window_start in units:
             bird = recording.split(' ')[0]
-            save_path = rf'C:\Users\tmerri03\Desktop\Neural Data\Awake Plots\{bird}\Summary'
+            save_path = rf'{self.output_path}\{bird}\Summary'
             if not os.path.exists(save_path):
                 os.makedirs(save_path)
             N = Neuron(self.recording, unit, rec=self.rec, db=self.db)
@@ -484,7 +491,7 @@ class Response(EvalQuality):
 
         for unit, recording, window_start in units:
             bird = recording.split(' ')[0]
-            save_path = rf'C:\Users\tmerri03\Desktop\Neural Data\Awake Plots\{bird}\Offsets'
+            save_path = rf'{self.output_path}\{bird}\Offsets'
             if not os.path.exists(save_path):
                 os.makedirs(save_path)
             N = Neuron(self.recording, unit, rec=self.rec, db=self.db)
@@ -501,7 +508,7 @@ class Response(EvalQuality):
         }
         units = self.db.load_neurons_from_database(select_columns, conditions)
         bird = self.recording.split(' ')[0]
-        save_path = rf'C:\Users\tmerri03\Desktop\Neural Data\Awake Plots\{bird}\Waveforms'
+        save_path = rf'{self.output_path}\{bird}\Waveforms'
         if not os.path.exists(save_path):
             os.makedirs(save_path)
         _plot.plot_waveforms(rec=self.rec, units=units, save_path=save_path)
@@ -515,7 +522,7 @@ class Response(EvalQuality):
         }
         units = self.db.load_neurons_from_database(select_columns, conditions)
         bird = self.recording.split(' ')[0]
-        save_path = rf'C:\Users\tmerri03\Desktop\Neural Data\Awake Plots\{bird}\Probe'
+        save_path = rf'{self.output_path}\{bird}\Probe'
         if not os.path.exists(save_path):
             os.makedirs(save_path)
         _plot.plot_probe(rec=self.rec, units=units, save_path=save_path)

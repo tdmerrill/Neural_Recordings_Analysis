@@ -177,8 +177,8 @@ for recording_folder in os.listdir(RECORDINGS_FOLDER):
         N.save_plots(output_path=save_path, clear_cache=True)
 ```
 
-# Using Neural-Recordings-Analysis
-SiNAPSE provides the main framework for interacting with your data, but the Neural-Recordings-Analysis repo 
+# Using Neural_Recordings_Analysis
+SiNAPSE provides the main framework for interacting with your data, but the Neural_Recordings_Analysis repo 
 provides a set of tools for analyzing and visualizing your data. Here are some examples of what you can do:
 
 1. Evaluate the stability of your recordings by calculating drift in the baseline activity.
@@ -194,18 +194,21 @@ RECORDINGS_PATH = r'R:\Data\RhythmPerception\Neural Recordings\Recordings'
 DB_PATH = r'C:\Users\tmerri03\Desktop\Temp Neural Files\awake_recordings.db'
 STIM_LIB_PATH = r'R:\Data\tyler\Recordings\Stim\Stimuli Library'
 
-from Neural-Recordings-Analysis._generate_database import *
+from Neural_Recordings_Analysis._generate_database import *
 db = generate_database(DB_PATH, STIM_LIB_PATH)
 recordings = sorted(db.recordings, reverse=True)
 
-from Neural-Recordings-Analysis._neurons import Response
+from Neural_Recordings_Analysis._neurons import Response
 for recording in recordings:
-    R = Response(STIM_LIB_PATH, RECORDINGS_PATH, recording, db=db)
+    R = Response(STIM_LIB_PATH, RECORDINGS_PATH, recording, db=db, output=r'C:\Users\tmerri03\Desktop\Neural Data\Awake Plots')
     R.evaluate_neurons()
     R.summary
     R.waveforms
     R.probe
 ```
+You may specify an output path for the plots with the `output` parameter. If you don't specify an output path,
+the plots will be saved to your home directory in `C:\Users\<username>\.Neural_Recordings_Analysis\outputs`.
+```python
 
 # Citations
 SiNAPSE and other tools heavily use code written by other labs and developers.
