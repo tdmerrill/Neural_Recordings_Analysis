@@ -1,5 +1,6 @@
 from SiNAPSE.core import Neuron, Recording
 import _generate_database, _tones, _plot
+from neuron_clustering import extract_neuron_features, build_population_dataframe, cluster_neurons
 
 from pathlib import Path
 import os
@@ -8,6 +9,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('TkAgg')
+import scipy
+
+
+from matplotlib.collections import LineCollection
 
 class EvalQuality:
     def __init__(self, stim_lib_path, recordings_path, recording, db, ntrials=20):
@@ -110,7 +115,7 @@ class Response(EvalQuality):
         else:
             print(f'Skipping: {self.recording}')
 
-    def baseline_fr(self, duration=2, return_raster=False):
+    def baseline_fr(self, duration=2, return_raster=False, binsize=1/1000):
         select_columns = ['unit_id', 'session_id', f'best_{self.ntrials}trials_window_start']
         conditions = {
             'manual_isi_0_7': ('<', 1),
@@ -126,12 +131,22 @@ class Response(EvalQuality):
             baseline_trials, ntrials, nstimuli = N.collect_baseline(duration=duration)
             trial_duration = duration * nstimuli
 
-            trial_frs = [
-                len(spikes) / trial_duration
-                for spikes in baseline_trials
-            ]
-            mean_fr = np.mean(trial_frs)
-            std_fr = np.std(trial_frs, ddof=1)
+            bins = np.arange(0, trial_duration + binsize, binsize)
+
+            # histogram each trial's baseline spikes into 1ms bins, convert to Hz
+            binned_rates = []
+            for spikes in baseline_trials:
+                counts, _ = np.histogram(spikes, bins=bins)
+                rate = counts / binsize  # Hz, per trial, per bin
+                binned_rates.append(rate)
+
+            binned_rates = np.stack(binned_rates)  # shape (ntrials, nbins)
+
+            # trial-averaged rate, matching how `rate` is computed in prepare()
+            trial_avg_rate = binned_rates.mean(axis=0)  # shape (nbins,)
+
+            mean_fr = np.mean(trial_avg_rate)
+            std_fr = np.std(trial_avg_rate, ddof=1)
 
             baselines[unit]['mean'] = mean_fr
             baselines[unit]['std'] = std_fr
@@ -475,8 +490,23 @@ class Response(EvalQuality):
             if not os.path.exists(save_path):
                 os.makedirs(save_path)
             N = Neuron(self.recording, unit, rec=self.rec, db=self.db)
-            _plot.plot_summary(N=N, save_path=save_path, baseline=baselines[unit], window_start=int(window_start), ntrials=self.ntrials)
+            if window_start is None:
+                window_start = 0
+            _plot.plot_summary(N=N, save_path=save_path, baseline=baselines[unit], window_start=0, ntrials=self.ntrials)
 
+    @property
+    def stimuli(self):
+        select_columns = ['unit_id', 'session_id', f'best_{self.ntrials}trials_window_start']
+        conditions = {
+            'manual_isi_0_7': ('<', 1),
+            'session_id': ('=', self.recording),
+        }
+        units = self.db.load_neurons_from_database(select_columns, conditions)
+
+        for unit, recording, window_start in units:
+            N = Neuron(self.recording, unit, rec=self.rec, db=self.db)
+            stims=N.load
+            return stims
 
     @property
     def offsets(self):
@@ -527,8 +557,52 @@ class Response(EvalQuality):
             os.makedirs(save_path)
         _plot.plot_probe(rec=self.rec, units=units, save_path=save_path)
 
-    # --- pca functions ---
-    def neural_space(self, binsize_ms=10):
+    @property
+    def find_omission_candidates(self):
+        import omission_analysis
+
+        select_columns = ['unit_id', 'session_id']
+        conditions = {
+            'manual_isi_0_7': ('<', 1),
+            'session_id': ('=', self.recording),
+        }
+        units = self.db.load_neurons_from_database(select_columns, conditions)
+
+        for unit, recording in units:
+            omission_analysis.run(recording, unit, self.db.db_path, self.db.stim_library, self.recordings_path)
+
+    @property
+    def decompose(self):
+        import omission_analysis
+
+        select_columns = ['unit_id', 'session_id']
+        conditions = {
+            'manual_isi_0_7': ('<', 1),
+            'session_id': ('=', self.recording),
+        }
+        units = self.db.load_neurons_from_database(select_columns, conditions)
+
+        # for unit, recording in units:
+        #     analysis = omission_analysis.run(recording, unit, self.db.db_path, self.db.stim_library, self.recordings_path)
+        #     feats = extract_neuron_features(analysis)
+
+        neurons = []
+        for unit, recording in units:
+            neurons.append(unit)
+
+        raw_sounds_path=r'C:\\Users\\tmerri03\\Desktop\\RhythmStimuli\\Awake Recs\\Raw Files\\regex'
+        stim_subset = [
+            'ZF A_20db_180ms_8b_1xomit_8b_silence',
+            # 'ZF A_20db_300ms_8b_1xomit_8b_silence',
+            # '2khz_20db_180ms_8b_1xomit_8b_silence',
+            # '2khz_20db_300ms_8b_1xomit_8b_silence',
+        ]
+        df = build_population_dataframe(neurons, self.db.db_path, self.db.stim_library, self.recordings_path,
+                                   raw_sounds_path, recording, stim_subset)
+        return df
+
+    # --- PCA functions ---
+    def neural_space(self, binsize_ms=10, padding=0):
         # fit a neural space on the response strength of each condition
         # ends with m*n matrix:
             # m = time points (rows)
@@ -558,12 +632,17 @@ class Response(EvalQuality):
                 all_trial_spikes = {}
                 expected_rates = []
                 for stimulus in stimuli:
-                    _, trial_spikes, tduration = N.raster(stimulus, baseline=False, plot=False, padding=0, separate_trials=True)
+                    _, trial_spikes, tduration = N.raster(stimulus, baseline=False, plot=False, padding=padding, separate_trials=True)
+                    tduration += padding
+
                     if stimulus not in all_trial_spikes.keys():
                         all_trial_spikes[stimulus] = trial_spikes[window_start:window_start+self.ntrials]
                         all_trial_spikes[f'{stimulus}_duration'] = tduration
-                    _, baseline_spikes, bduration = N.raster(stimulus, baseline=True, plot=False, padding=0, separate_trials=False)
+                    _, baseline_spikes, bduration = N.raster(stimulus, baseline=True, plot=False, padding=padding, separate_trials=False)
+                    bduration += padding
+
                     all_baseline_spikes.extend(baseline_spikes[window_start:window_start+self.ntrials])
+
 
                     #calculate expected spikes per time bin
                     n_timebins = bduration / (binsize_ms / 1000)
@@ -613,45 +692,951 @@ class Response(EvalQuality):
         return Z, X, pca, conditions, trials, times
 
     def project_condition(self, condition, pca_result):
-        Z, X, pca, conditions, trials, times = pca_result
+        bird = self.recording.split(' ')[0]
+        save_path = rf'{self.output_path}\{bird}\PCA'
 
+        # if os.path.exists(f'{save_path}\{self.recording}_{condition}_neural_trajectory.png'):
+        #     return
+
+        import numpy as np
+
+        Z, X, pca, conditions, trials, times = pca_result
+        mu = X.mean(axis=0)
+        sigma = X.std(axis=0)
         print(f'Projecting {condition} condition into PCA space.')
 
         idx = np.where(conditions == condition)[0]
         idx = idx[np.argsort(times[idx])]
         X_cond = X[idx]
-        X_cond_z = (X_cond - X_cond.mean()) / X_cond.std()
+        X_cond_z = (X_cond - mu) / sigma
         Z_cond = pca.transform(X_cond_z)
 
+        # plot trial-by-trial trajectory
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(7, 7))
+
+        unique_trials = np.unique(trials[idx])
+
+        for trial in unique_trials:
+            trial_idx = idx[trials[idx] == trial]
+
+            # sort this trial by time
+            trial_idx = trial_idx[np.argsort(times[trial_idx])]
+
+            X_trial = X[trial_idx]
+            X_trial_z = (X_trial - mu) / sigma
+            Z_trial = pca.transform(X_trial_z)
+
+            ax.plot(
+                Z_trial[:, 0],
+                Z_trial[:, 1],
+                lw=2,
+                alpha=0.6,
+                label=f"Trial {trial}"
+            )
+
+            # mark start/end
+            ax.scatter(Z_trial[0, 0], Z_trial[0, 1], s=30, c='green')
+            ax.scatter(Z_trial[-1, 0], Z_trial[-1, 1], s=30, c='red')
+
+        ax.set_xlabel("PC1")
+        ax.set_ylabel("PC2")
+        ax.set_title(f"{condition} - Individual Trial Trajectories")
+
+        # --- plot average trajectory ---
+        from scipy.ndimage import gaussian_filter1d
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        # Mean PSTH across trials
+        unique_times = np.unique(times[idx])
+
+        X_mean = []
+        for t in unique_times:
+            t_idx = idx[times[idx] == t]
+            X_mean.append(X[t_idx].mean(axis=0))
+
+        X_mean = np.vstack(X_mean)
+
+        # Smooth each neuron independently
+        sigma_bins = 1.5  # ~15 ms if binsize = 10 ms
+        X_mean = gaussian_filter1d(
+            X_mean,
+            sigma=sigma_bins,
+            axis=0,
+            mode="nearest"
+        )
+
+        # Project
+        X_mean_z = (X_mean - mu) / sigma
+        Z_mean = pca.transform(X_mean_z)
+
+
+        import scipy
+        if condition == 'ZF A_20db_180ms_8b_1xomit_8b_silence':
+            tempo = 180
+        elif condition == 'ZF A_20db_300ms_8b_1xomit_8b_silence':
+            tempo = 300
+        else:
+            tempo = None
+
+        if tempo is not None:
+            if not os.path.exists(save_path):
+                os.makedirs(save_path, exist_ok=True)
+
+            sr, sound = scipy.io.wavfile.read(r"C:\Users\tmerri03\Desktop\RhythmStimuli\Awake Recs\Raw Files\ZF A_20db.wav")
+            beat_duration = len(sound)/sr
+            gap_duration = tempo/1000 - beat_duration
+            omission_duration = gap_duration + tempo/1000
+            beat_times_1 = np.arange(0,8) * tempo/1000 + omission_duration
+            baseline = beat_times_1[0] - tempo/1000 - np.arange(0,1) * tempo/1000
+            omission_times = np.arange(1) * tempo/1000 + tempo/1000 + beat_times_1[-1]
+            beat_times_2 = np.arange(0, 8) * tempo/1000 + tempo/1000 + omission_times[-1]
+            offset_times = np.arange(0,2) * tempo/1000 + tempo/1000 + beat_times_2[-1]
+            beat_times = np.concatenate([beat_times_1, beat_times_2])
+            all_times = np.concatenate([baseline, beat_times_1, omission_times, beat_times_2, offset_times])
+
+            fig = self.plot_pca_summary(unique_times, Z_mean, condition)
+            plt.savefig(
+                os.path.join(save_path,
+                f"{self.recording}_{condition}_neural_trajectory.png"),
+                dpi=300,
+                bbox_inches="tight"
+            )
+
+            template, covariance, relative_time, beat_segments = self.make_beat_template(Z_mean, unique_times, beat_times)
+            res = self.compare_beats_to_template(Z_mean, unique_times, all_times, beat_duration, template, covariance)
+            fig = self.plot_template_comparison(template, res)
+            plt.savefig(f'{save_path}\{self.recording}_{condition}_template_comparison.png', dpi=300)
+            fig = self.plot_individual_beats(template, res)
+            plt.savefig(f'{save_path}\{self.recording}_{condition}_indvididual_beats.png', dpi=300)
+            plt.close()
+
+    def plot_conditions(self, conditions_to_plot, pca_result, sigma_bins=1.5):
+        import numpy as np
         import matplotlib.pyplot as plt
         from matplotlib.collections import LineCollection
+        from scipy.ndimage import gaussian_filter1d
 
-        points = Z_cond[:, :2]
-        t = np.arange(len(points))
+        Z, X, pca, conditions, trials, times = pca_result
 
+        mu = X.mean(axis=0)
+        sigma = X.std(axis=0)
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+
+        cmap = plt.get_cmap("tab10")
+
+        for i, condition in enumerate(conditions_to_plot):
+
+            idx = np.where(conditions == condition)[0]
+
+            unique_times = np.unique(times[idx])
+
+            # Average neural activity at each timepoint
+            X_mean = []
+            for t in unique_times:
+                t_idx = idx[times[idx] == t]
+                X_mean.append(X[t_idx].mean(axis=0))
+
+            X_mean = np.vstack(X_mean)
+
+            # Smooth each neuron
+            X_mean = gaussian_filter1d(
+                X_mean,
+                sigma=sigma_bins,
+                axis=0,
+                mode="nearest"
+            )
+
+            # Project into PCA space
+            X_mean_z = (X_mean - mu) / sigma
+            Z_mean = pca.transform(X_mean_z)
+
+            points = Z_mean[:, :2]
+
+            color = cmap(i % 10)
+
+            ax.plot(
+                points[:, 0],
+                points[:, 1],
+                lw=3,
+                color=color,
+                label=condition
+            )
+
+            # start
+            ax.scatter(
+                points[0, 0],
+                points[0, 1],
+                color=color,
+                edgecolor='k',
+                marker='o',
+                s=70
+            )
+
+            # end
+            ax.scatter(
+                points[-1, 0],
+                points[-1, 1],
+                color=color,
+                edgecolor='k',
+                marker='s',
+                s=70
+            )
+
+        ax.set_xlabel("PC1")
+        ax.set_ylabel("PC2")
+        ax.set_title("Mean Neural Trajectories")
+
+        ax.legend()
+
+        plt.tight_layout()
+        bird = self.recording.split(' ')[0]
+        save_path = rf'{self.output_path}\{bird}\PCA'
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        plt.savefig(f'{save_path}\{self.recording}_summary_neural_trajectory.png', dpi=300)
+        plt.close()
+
+    @staticmethod
+    def make_beat_template(Z, time, beat_times,
+                       pre=0.05,
+                       post=0.18):
+
+        dt = np.median(np.diff(time))
+
+        n_pre = int(round(pre / dt))
+        n_post = int(round(post / dt))
+
+        beat_segments = []
+
+        for beat in beat_times:
+
+            center = np.argmin(np.abs(time - beat))
+
+            start = center - n_pre
+            stop = center + n_post + 1
+
+            if start < 0 or stop > len(time):
+                continue
+
+            beat_segments.append(Z[start:stop])
+
+        beat_segments = np.stack(beat_segments)
+
+        template = beat_segments.mean(axis=0)
+
+        covariance = np.array([
+            np.cov(beat_segments[:, i, :].T)
+            for i in range(template.shape[0])
+        ])
+
+        relative_time = np.arange(
+            -n_pre,
+            n_post + 1
+        ) * dt
+
+        return (
+            template,
+            covariance,
+            relative_time,
+            beat_segments
+        )
+
+    @staticmethod
+    def compare_beats_to_template(
+            Z,
+            time,
+            beat_times,
+            beat_duration,
+            template,
+            covariance,
+            pre=0.05,
+            post=0.18,
+    ):
+        import numpy as np
+        import pandas as pd
+
+        dt = np.median(np.diff(time))
+
+        n_pre = int(round(pre / dt))
+        n_post = int(round(post / dt))
+
+        segments = []
+        labels = []
+        beat_masks = []
+
+        for beat in beat_times:
+
+            center = np.argmin(np.abs(time - beat))
+
+            start = center - n_pre
+            stop = center + n_post + 1
+
+            if start < 0 or stop > len(time):
+                continue
+
+            segment = Z[start:stop]
+            window_time = time[start:stop]
+
+            # Samples during the physical beat
+            beat_mask = (
+                    (window_time >= beat) &
+                    (window_time <= beat + beat_duration)
+            )
+
+            segments.append(segment)
+            labels.append(beat)
+            beat_masks.append(beat_mask)
+
+        segments = np.stack(segments)
+
+        from scipy.spatial.distance import mahalanobis
+        from scipy.signal import correlate, correlation_lags
+
+        rows = []
+
+        template_flat = template.reshape(-1)
+
+        template_energy = np.sum(
+            np.linalg.norm(template, axis=1)
+        )
+
+        for beat_time, segment, beat_mask in zip(labels, segments, beat_masks):
+
+            # ---------- RMSE ----------
+
+            rmse = np.sqrt(
+                np.mean((segment - template) ** 2)
+            )
+
+            # ---------- Correlation ----------
+
+            corr = np.corrcoef(
+                segment.reshape(-1),
+                template_flat
+            )[0, 1]
+
+            # ---------- Energy ----------
+
+            energy = np.sum(
+                np.linalg.norm(segment, axis=1)
+            )
+
+            energy_ratio = energy / template_energy
+
+            # ---------- Mahalanobis ----------
+
+            mahal = []
+
+            for x, mu, cov in zip(
+                    segment,
+                    template,
+                    covariance
+            ):
+                cov = cov + np.eye(cov.shape[0]) * 1e-6
+
+                inv = np.linalg.inv(cov)
+
+                mahal.append(
+                    mahalanobis(
+                        x,
+                        mu,
+                        inv
+                    )
+                )
+
+            mahal = np.asarray(mahal)
+
+            mahal_mean = mahal.mean()
+
+            # ---------- Lag ----------
+
+            x = segment[:, 0]
+            y = template[:, 0]
+
+            x = x - x.mean()
+            y = y - y.mean()
+
+            xc = correlate(x, y)
+
+            lag = correlation_lags(
+                len(x),
+                len(y)
+            )[np.argmax(xc)]
+
+            lag_ms = lag * dt * 1000
+
+            rows.append({
+
+                "beat_time": beat_time,
+
+                "rmse": rmse,
+
+                "correlation": corr,
+
+                "energy_ratio": energy_ratio,
+
+                "mahalanobis": mahal_mean,
+
+                "lag_ms": lag_ms,
+
+                "mahal_profile": mahal,
+
+                "trajectory": segment,
+
+                "beat_mask": beat_mask
+
+            })
+
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def plot_template_comparison(
+            template,
+            comparison_df,
+            relative_time=None,
+            figsize=(14, 8)
+    ):
+        import numpy as np
+        import matplotlib.pyplot as plt
+
+        from matplotlib.gridspec import GridSpec
+
+        fig = plt.figure(figsize=figsize)
+
+        gs = GridSpec(
+            2,
+            5,
+            figure=fig,
+            width_ratios=[2.5, 1, 1, 1, 1],
+            height_ratios=[3, 2]
+        )
+
+        # --------------------------------------------------------
+        # Trajectory panel
+        # --------------------------------------------------------
+
+        ax_traj = fig.add_subplot(gs[0, 0])
+
+        for _, row in comparison_df.iterrows():
+            seg = row["trajectory"]
+
+            ax_traj.plot(
+                seg[:, 0],
+                seg[:, 1],
+                alpha=.35,
+                lw=1.5
+            )
+
+        ax_traj.plot(
+            template[:, 0],
+            template[:, 1],
+            color="red",
+            lw=4,
+            label="Template"
+        )
+
+        ax_traj.scatter(
+            template[0, 0],
+            template[0, 1],
+            color="green",
+            s=60,
+            label="Start"
+        )
+
+        ax_traj.scatter(
+            template[-1, 0],
+            template[-1, 1],
+            color="red",
+            s=60,
+            label="End"
+        )
+
+        ax_traj.set_title("Beat trajectories")
+        ax_traj.set_xlabel("PC1")
+        ax_traj.set_ylabel("PC2")
+        ax_traj.legend()
+
+        # --------------------------------------------------------
+        # Heatmap
+        # --------------------------------------------------------
+
+        ax_heat = fig.add_subplot(gs[0, 1:])
+
+        heat = np.vstack(
+            comparison_df.mahal_profile.values
+        )
+
+        im = ax_heat.imshow(
+            heat,
+            aspect="auto",
+            origin="lower",
+            cmap="viridis"
+        )
+
+        ax_heat.set_title("Distance from template")
+
+        ax_heat.set_ylabel("Beat")
+
+        if relative_time is not None:
+            ticks = np.linspace(
+                0,
+                len(relative_time) - 1,
+                5,
+                dtype=int
+            )
+
+            ax_heat.set_xticks(ticks)
+            ax_heat.set_xticklabels(
+                np.round(relative_time[ticks] * 1000).astype(int)
+            )
+
+            ax_heat.set_xlabel("Time relative to beat (ms)")
+
+        plt.colorbar(
+            im,
+            ax=ax_heat,
+            label="Mahalanobis distance"
+        )
+
+        # --------------------------------------------------------
+        # Summary metrics
+        # --------------------------------------------------------
+
+        metrics = [
+            ("correlation", "Correlation", 1),
+            ("mahalanobis", "Mahalanobis", None),
+            ("rmse", "RMSE", None),
+            ("energy_ratio", "Energy", 1),
+            ("lag_ms", "Lag (ms)", 0),
+        ]
+
+        for i, (col, title, ref) in enumerate(metrics):
+
+            ax = fig.add_subplot(gs[1, i])
+
+            y = comparison_df[col].values
+
+            x = np.arange(len(y))
+
+            ax.scatter(
+                x,
+                y,
+                s=40
+            )
+
+            ax.plot(
+                x,
+                y,
+                alpha=.3
+            )
+
+            if ref is not None:
+                ax.axhline(
+                    ref,
+                    ls="--",
+                    c="k",
+                    lw=1
+                )
+
+            ax.set_title(title)
+
+            ax.set_xticks(x)
+
+            ax.set_xticklabels(
+                np.arange(1, len(y) + 1)
+            )
+
+            ax.set_xlabel("Beat")
+
+        plt.tight_layout()
+
+        return fig
+
+    @staticmethod
+    def plot_individual_beats(
+            template,
+            comparison_df,
+            ncols=4,
+            figsize=(14, 8),
+    ):
+
+        import numpy as np
+        import matplotlib.pyplot as plt
+
+        nbeats = len(comparison_df)
+
+        nrows = int(np.ceil(nbeats / ncols))
+
+        fig, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=figsize,
+            squeeze=False
+        )
+
+        axes = axes.ravel()
+
+        for ax, (_, row) in zip(axes, comparison_df.iterrows()):
+
+            seg = row["trajectory"]
+
+            # Beat trajectory
+            ax.plot(
+                seg[:, 0],
+                seg[:, 1],
+                color="steelblue",
+                lw=2,
+                label="Trajectory"
+            )
+
+            # Template
+            ax.plot(
+                template[:, 0],
+                template[:, 1],
+                color="red",
+                lw=3,
+                label="Template",
+                alpha=0.3
+            )
+
+            # -------------------------------------------------
+            # Draw physical beat interval
+            # -------------------------------------------------
+
+            beat_mask = row["beat_mask"]
+
+            if np.any(beat_mask):
+
+                beat_seg = seg[beat_mask]
+
+                ax.plot(
+                    beat_seg[:, 0],
+                    beat_seg[:, 1],
+                    color="black",
+                    lw=1,
+                    solid_capstyle="round",
+                    zorder=10,
+                )
+
+                if len(beat_seg) > 1:
+                    ax.annotate(
+                        "",
+                        xy=(beat_seg[-1, 0], beat_seg[-1, 1]),
+                        xytext=(beat_seg[-2, 0], beat_seg[-2, 1]),
+                        arrowprops=dict(
+                            arrowstyle="->",
+                            lw=2,
+                            color="black",
+                        ),
+                        zorder=11,
+                    )
+
+            # -------------------------------------------------
+
+            # Template start/end
+            ax.scatter(
+                template[0, 0],
+                template[0, 1],
+                color="green",
+                s=35
+            )
+
+            ax.scatter(
+                template[-1, 0],
+                template[-1, 1],
+                color="red",
+                s=35
+            )
+
+            # Segment start/end
+            ax.scatter(
+                seg[0, 0],
+                seg[0, 1],
+                color="lime",
+                marker="x",
+                s=35
+            )
+
+            ax.scatter(
+                seg[-1, 0],
+                seg[-1, 1],
+                color="darkred",
+                marker="x",
+                s=35
+            )
+
+            ax.set_title(
+                f"{row.beat_time:.2f} s",
+                fontsize=10
+            )
+
+            txt = (
+                f"r={row.correlation:.2f}\n"
+                f"RMSE={row.rmse:.2f}\n"
+                f"Mah={row.mahalanobis:.2f}\n"
+                f"Lag={row.lag_ms:.0f} ms"
+            )
+
+            ax.text(
+                0.03,
+                0.97,
+                txt,
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                fontsize=8,
+                bbox=dict(
+                    facecolor="white",
+                    alpha=0.8,
+                    edgecolor="none"
+                )
+            )
+
+            ax.set_xlabel("PC1")
+            ax.set_ylabel("PC2")
+            ax.set_aspect("equal", adjustable="datalim")
+
+        # Remove unused axes
+        for ax in axes[nbeats:]:
+            ax.remove()
+
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(
+            handles,
+            labels,
+            loc="upper right"
+        )
+
+        fig.tight_layout()
+
+        return fig
+
+    @staticmethod
+    def plot_pca_summary(unique_times, Z_mean, condition):
+        # ---------- Plot ----------
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+        ax_pc1 = axes[0, 0]
+        ax_pc2 = axes[0, 1]
+        ax_pc3 = axes[1, 0]
+        ax_traj = axes[1, 1]
+
+        # -----------------------
+        # PC1, PC2, PC3 vs Time
+        # -----------------------
+        colors = ["tab:blue", "tab:orange", "tab:green"]
+
+        for i, ax in enumerate([ax_pc1, ax_pc2, ax_pc3]):
+            ax.plot(unique_times, Z_mean[:, i],
+                    color=colors[i],
+                    lw=2)
+
+            ax.scatter(unique_times[0], Z_mean[0, i],
+                       color="limegreen", s=60, zorder=3)
+
+            ax.scatter(unique_times[-1], Z_mean[-1, i],
+                       color="red", s=60, zorder=3)
+
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel(f"PC{i + 1}")
+            ax.set_title(f"PC{i + 1} vs Time")
+
+        # -----------------------
+        # PC1-PC2 trajectory
+        # -----------------------
+        points = Z_mean[:, :2]
         segments = np.stack([points[:-1], points[1:]], axis=1)
+
 
         lc = LineCollection(
             segments,
             cmap="viridis",
-            array=t[:-1],
-            linewidth=2
+            array=unique_times[:-1],
+            linewidth=3
         )
 
-        plt.figure()
-        plt.gca().add_collection(lc)
+        ax_traj.add_collection(lc)
 
-        plt.xlim(points[:, 0].min(), points[:, 0].max())
-        plt.ylim(points[:, 1].min(), points[:, 1].max())
+        ax_traj.scatter(
+            points[0, 0],
+            points[0, 1],
+            color="limegreen",
+            s=80,
+            label="Start"
+        )
 
-        mid = len(Z_cond) // 2
-        plt.scatter(Z_cond[mid, 0], Z_cond[mid, 1], color='red', s=80, label='midpoint')
-        plt.text(Z_cond[mid, 0], Z_cond[mid, 1], "mid", color='red')
+        ax_traj.scatter(
+            points[-1, 0],
+            points[-1, 1],
+            color="red",
+            s=80,
+            label="End"
+        )
 
-        plt.colorbar(lc, label="time (bins)")
-        plt.xlabel("PC1")
-        plt.ylabel("PC2")
-        plt.title("Time-colored neural trajectory")
+        ax_traj.autoscale()
+
+        cbar = fig.colorbar(lc, ax=ax_traj)
+        cbar.set_label("Time (s)")
+
+        ax_traj.set_xlabel("PC1")
+        ax_traj.set_ylabel("PC2")
+        ax_traj.set_title("Neural Trajectory")
+        ax_traj.legend()
+
+        fig.suptitle(f"{condition} Mean Neural Trajectory", fontsize=16)
+
+        plt.tight_layout()
+
+        return fig
+
+    # --- dPCA functions ---
+    def fit_dpca(self, stimulus):
+        # fit a neural space on the response strength of each condition
+        # ends with m*n matrix:
+        # m = time points (rows)
+        # n = neurons (columns)
+        tempo = None
+        if stimulus == 'ZF A_20db_180ms_8b_1xomit_8b_silence':
+            tempo = 180
+        elif stimulus == 'ZF A_20db_300ms_8b_3xomit_8b_silence':
+            tempo = 300
+
+        if tempo is None:
+            print('Not a valid stimulus choice for dPCA')
+            return
+
+        sr, sound = scipy.io.wavfile.read(r"C:\Users\tmerri03\Desktop\RhythmStimuli\Awake Recs\Raw Files\ZF A_20db.wav")
+        beat_duration = len(sound) / sr
+        gap_duration = tempo / 1000 - beat_duration
+        omission_duration = gap_duration + tempo / 1000
+        beat_times_1 = np.arange(0, 8) * tempo / 1000 + omission_duration
+        baseline = beat_times_1[0] - tempo / 1000 - np.arange(0, 1) * tempo / 1000
+        omission_times = np.arange(1) * tempo / 1000 + tempo / 1000 + beat_times_1[-1]
+        beat_times_2 = np.arange(0, 8) * tempo / 1000 + tempo / 1000 + omission_times[-1]
+        offset_times = np.arange(0, 2) * tempo / 1000 + tempo / 1000 + beat_times_2[-1]
+        beat_times = np.concatenate([beat_times_1, beat_times_2])
+        all_times = np.concatenate([baseline, beat_times_1, omission_times, beat_times_2, offset_times])
+        expected_times = np.concatenate([omission_times, offset_times])
+
+        # -- gather baseline frs --
+        baselines = self.baseline_fr(duration=2)
+
+        # check if mat already exists
+        save_path = os.path.join(__file__, '..', '.dpca_mats', f'_{self.recording}_{stimulus}.npz')
+        if not os.path.exists(save_path):
+
+            select_columns = ['unit_id', 'session_id']
+            conditions = {
+                'manual_isi_0_7': ('<', 1),
+                'session_id': ('=', self.recording),
+            }
+
+            padding=1 #add padding in case winows go over total stimulus time
+            pre=0.1
+            post=0.3
+            binsize=0.01
+            beat_times = beat_times + padding
+            expected_times = expected_times + padding
+            bins = np.arange(-pre, post + binsize, binsize)
+
+            neurons = self.db.load_neurons_from_database(select_columns, conditions)
+            responses = None
+            for u, (unit, _) in enumerate(neurons):
+                N = Neuron(self.recording, unit, rec=self.rec, db=self.db)
+                stimuli = N.load
+                _, trial_spikes, tduration = N.raster(stimulus, baseline=False, plot=False, padding=padding, separate_trials=True)
+
+                if responses is None:
+                    n_trials = len(trial_spikes)
+                    n_bins = len(bins) - 1
+                    n_neurons = len(neurons)
+
+                    responses = np.zeros(
+                        (n_neurons, 2, n_trials, n_bins),
+                        dtype=float
+                    )
+
+                for t, trial in enumerate(trial_spikes):
+                    beat_hists=[]
+                    for beat in beat_times:
+                        rel = trial-beat
+                        rel = rel[(rel > -pre) & (rel < post)]
+                        hist, edges = np.histogram(rel, bins=bins)
+                        hist = hist-baselines[unit]['mean']*binsize
+                        beat_hists.append(hist)
+                    responses[u,0,t] = np.mean(beat_hists, axis=0)
+
+                    expected_hists=[]
+                    for expected in expected_times:
+                        rel = trial-expected
+                        rel = rel[(rel > -pre) & (rel < post)]
+                        hist, edges = np.histogram(rel, bins=bins)
+                        hist = hist-baselines[unit]['mean']*binsize
+                        expected_hists.append(hist)
+                    responses[u, 1, t] = np.mean(expected_hists, axis=0)
+            np.savez_compressed(
+                save_path,
+                responses=responses,
+                bins=bins,
+                stimulus=stimulus,
+                tempo=tempo,
+                pre=pre,
+                post=post,
+                binsize=binsize
+            )
+
+        #continue with analysis
+        data = np.load(save_path)
+        responses = data['responses']
+        bins = data['bins']
+        stimulus = data['stimulus']
+        tempo = data['tempo']
+        pre = data['pre']
+        post = data['post']
+        binsize = data['binsize']
+
+
+        mean_beat = responses.mean(axis=(0, 2))[0]
+        mean_omit = responses.mean(axis=(0, 2))[1]
+
+        print(f'Responses Shape: {responses.shape}')
+
+        from dPCA import dPCA
+        X = responses.mean(axis=2)
+        X -= X.mean(axis=(1, 2), keepdims=True)
+        print(f'X Shape: {X.shape}')
+        dpca = dPCA.dPCA(
+            labels='ct',
+            regularizer=None
+        )
+        Z = dpca.fit_transform(X)
+
+        print(f'Z Keys: {Z.keys()}')
+
+        plt.figure(figsize=(6, 6))
+
+        plt.plot(
+            Z['ct'][0, 0],
+            Z['ct'][1, 0],
+            marker='o',
+            label='Beat'
+        )
+
+        plt.plot(
+            Z['ct'][0, 1],
+            Z['ct'][1, 1],
+            marker='o',
+            label='Omission'
+        )
+
+        plt.xlabel('dPCA component 1')
+        plt.ylabel('dPCA component 2')
+        plt.legend()
+        plt.axis('equal')
         plt.show()
 
 class LatencyCalculator:
