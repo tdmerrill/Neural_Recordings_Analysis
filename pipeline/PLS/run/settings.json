@@ -1,0 +1,125 @@
+{
+    "paths": {
+        "db_path": "C:\\Users\\tmerri03\\Desktop\\Temp Neural Files\\awake_recordings.db",
+        "save_dir": "C:\\Users\\tmerri03\\Desktop\\PLS Results",
+        "recordings_path": "R:\\Data\\RhythmPerception\\Neural Recordings\\Recordings",
+        "stim_lib_path": "R:\\Data\\tyler\\Recordings\\Stim\\Stimuli Library"
+    },
+
+    "analyses": {
+        "tempo_range_analysis_FieldL": {
+            "training_stim": [
+                "exp1_ZF A_20db_120ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_144ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_180ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_220ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_300ms_8b_1xomit_8b_silence",
+                "exp1_2khz_20db_180ms_8b_1xomit_8b_silence"
+            ],
+
+            "testing_stim": [
+                "exp1_ZF A_20db_120ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_144ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_180ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_220ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_300ms_8b_1xomit_8b_silence",
+
+                "exp1_exp1_ZF A_20db_120ms_8b_1xomit_8b_silence_ir",
+                "exp1_exp1_ZF A_20db_144ms_8b_1xomit_8b_silence_ir",
+                "exp1_exp1_ZF A_20db_180ms_8b_1xomit_8b_silence_ir",
+                "exp1_exp1_ZF A_20db_220ms_8b_1xomit_8b_silence_ir",
+                "exp1_exp1_ZF A_20db_300ms_8b_1xomit_8b_silence_ir",
+
+                "exp1_2khz_20db_180ms_8b_1xomit_8b_silence",
+                "exp1_exp1_2khz_20db_180ms_8b_1xomit_8b_silence_ir"
+            ],
+
+            "region": "Field L"
+        },
+        "tempo_range_analysis_HVC": {
+            "training_stim": [
+                "exp1_ZF A_20db_120ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_144ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_180ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_220ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_300ms_8b_1xomit_8b_silence",
+                "exp1_2khz_20db_180ms_8b_1xomit_8b_silence"
+            ],
+
+            "testing_stim": [
+                "exp1_ZF A_20db_120ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_144ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_180ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_220ms_8b_1xomit_8b_silence",
+                "exp1_ZF A_20db_300ms_8b_1xomit_8b_silence",
+
+                "exp1_exp1_ZF A_20db_120ms_8b_1xomit_8b_silence_ir",
+                "exp1_exp1_ZF A_20db_144ms_8b_1xomit_8b_silence_ir",
+                "exp1_exp1_ZF A_20db_180ms_8b_1xomit_8b_silence_ir",
+                "exp1_exp1_ZF A_20db_220ms_8b_1xomit_8b_silence_ir",
+                "exp1_exp1_ZF A_20db_300ms_8b_1xomit_8b_silence_ir",
+
+                "exp1_2khz_20db_180ms_8b_1xomit_8b_silence",
+                "exp1_exp1_2khz_20db_180ms_8b_1xomit_8b_silence_ir"
+            ],
+
+            "region": "HVC"
+        },
+        "testing_code": {
+              "training_stim": [
+                  "exp1_ZF A_20db_180ms_8b_1xomit_8b_silence"
+              ],
+
+              "testing_stim": [
+                  "exp1_ZF A_20db_180ms_8b_1xomit_8b_silence"
+              ],
+
+              "region": "Field L"
+          },
+        "older_omission_analysis": {
+            "training_stim": [
+                "ZF A_20db_180ms_8b_1xomit_8b_silence",
+                "ZF A_20db_300ms_8b_1xomit_8b_silence"
+            ],
+
+            "testing_stim": [
+                "ZF A_20db_180ms_8b_1xomit_8b_silence",
+                "ZF A_20db_300ms_8b_1xomit_8b_silence"
+
+            ],
+
+            "region": "Field L"
+        },
+        "GRFP": {
+            "training_stim": [
+                "exp1_ZF A_20db_180ms_8b_1xomit_8b_silence"
+            ],
+
+            "testing_stim": [
+                "exp1_ZF A_20db_180ms_8b_1xomit_8b_silence"
+            ],
+
+            "region": "HVC"
+        }
+    },
+
+    "birds": {
+        "trained": [
+            "o1o2",
+            "o5o6",
+            "o27g88",
+            "y92y99"
+        ],
+        "yoked": [
+            "w46o62",
+            "w65g13"
+        ],
+        "naive": [
+            "w70k80",
+            "o3o4",
+            "k36o45",
+            "w4g19",
+            "o3o55"
+        ]
+    }
+}

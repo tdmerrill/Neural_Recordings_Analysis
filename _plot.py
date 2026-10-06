@@ -288,6 +288,7 @@ def plot_summary(N, save_path=None, baseline={'mean':0, 'std':0}, dpi=300, windo
         if len(trial_spikes_separate) < ntrials:
             ntrials = len(trial_spikes_separate)
         trials_subset = trial_spikes_separate[window_start: window_start+ntrials]
+        trials_subset=trial_spikes_separate #plot all trials
         for t, trial in enumerate(trials_subset):
             raster_ax.vlines(trial, ymin=t, ymax=t+0.5, color='black')
 
@@ -546,8 +547,6 @@ def plot_waveforms(rec, units, save_path=None):
     if save_path is not None:
         save_fp = os.path.join(save_path, f'{Path(rec.rec_fp).name}_waveforms.png')
         plt.savefig(save_fp, dpi=300, bbox_inches="tight")
-
-
 
 def plot_probe(rec, units, save_path=None):
     from pathlib import Path

@@ -1,0 +1,50 @@
+{
+  "ZF A_20db_180ms_8b_1xomit_8b_silence":
+  {
+    "raw_sound": "ZF A_20db",
+    "tempo": 180,
+    "pre_beats": 8,
+    "post_beats": 8,
+    "omit_beats": 1
+  },
+  "ZF A_20db_300ms_8b_1xomit_8b_silence":
+  {
+    "raw_sound": "ZF A_20db",
+    "tempo": 300,
+    "pre_beats": 8,
+    "post_beats": 8,
+    "omit_beats": 1
+  },
+  "2khz_20db_180ms_8b_1xomit_8b_silence":
+  {
+    "raw_sound": "2khz_20db",
+    "tempo": 180,
+    "pre_beats": 8,
+    "post_beats": 8,
+    "omit_beats": 1
+  },
+  "2khz_20db_300ms_8b_1xomit_8b_silence":
+  {
+    "raw_sound": "2khz_20db",
+    "tempo": 300,
+    "pre_beats": 8,
+    "post_beats": 8,
+    "omit_beats": 1
+  },
+  "ZF A_20db_180_onebeatcontrol_silence":
+  {
+    "raw_sound": "ZF A_20db",
+    "tempo": 180,
+    "pre_beats": 1,
+    "post_beats": 0,
+    "omit_beats": 0
+  },
+  "2khz_20db_180_onebeatcontrol_silence":
+  {
+    "raw_sound": "2khz_20db",
+    "tempo": 180,
+    "pre_beats": 1,
+    "post_beats": 0,
+    "omit_beats": 0
+  }
+}
